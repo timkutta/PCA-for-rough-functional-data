@@ -1,0 +1,115 @@
+############################################################
+# Spiked Covariance Simulation + Two Largest Eigenvalue Histograms
+############################################################
+
+# -------------------------
+# Libraries
+# -------------------------
+library(mvtnorm)
+library(parallel)
+
+# -------------------------
+# Parameters
+# -------------------------
+set.seed(123)
+
+N        <- 100      # sample size per simulation
+p        <- 5 * N    # dimension
+lambda1  <- 1.1      # first spike
+n_sim    <- 500      # number of simulations
+break_N  <- 15       # number of histogram bins
+x_limits <- c(1.8, 3)  # x-axis limits for both histograms
+
+# -------------------------
+# Eigenvalue decay function b(x)
+# -------------------------
+b <- function(x) {
+  1 / exp(1.9 * x)
+}
+
+# -------------------------
+# Super-threshold solution
+# -------------------------
+super_threshold <- function(xi) {
+  if(xi >= 1 / max(b(0), 1e-10)) return(Inf)
+  integrand <- Vectorize(function(x) (b(x) * xi / (1 - b(x) * xi))^2)
+  I <- integrate(integrand, lower = 0, upper = 10)$value
+  I - 1
+}
+
+solution <- uniroot(super_threshold, lower = 0.01, upper = 1 / max(b(0)) * 0.99)$root
+cat("Super-threshold solution:", solution^(-1), "\n")
+
+# -------------------------
+# Psi function
+# -------------------------
+psi <- function(y) {
+  integrand <- function(x) b(x) / (y - b(x))
+  integral <- integrate(integrand, lower = 0, upper = 10)$value
+  y * (1 + integral)
+}
+
+# -------------------------
+# Covariance matrix
+# -------------------------
+create_covariance <- function(p, lambda1, N) {
+  lambda <- numeric(p)
+  lambda[1] <- lambda1
+  lambda[2:p] <- b((1:(p-1)) / N)
+  diag(lambda)
+}
+
+C <- create_covariance(p, lambda1, N)
+
+# -------------------------
+# Precompute Cholesky factor for faster sampling
+# -------------------------
+chol_C <- chol(C)
+
+# -------------------------
+# Sample largest eigenvalue
+# -------------------------
+sample_largest <- function() {
+  X <- matrix(rnorm(N * p), N, p) %*% chol_C
+  eig_vals <- eigen(cov(X), symmetric = TRUE, only.values = TRUE)$values
+  eig_vals[1]
+}
+
+# -------------------------
+# Run simulations in parallel
+# -------------------------
+n_cores <- detectCores() - 1
+largest_eigenvalues <- unlist(
+  mclapply(1:n_sim, function(i) sample_largest(), mc.cores = n_cores)
+)
+empirical_mean <- mean(largest_eigenvalues)
+
+# -------------------------
+# Histogram 1: red line at psi(solution^-1)
+# -------------------------
+hist(largest_eigenvalues,
+     breaks = break_N,
+     main = "",
+     xlab = "",
+     ylab = "",
+     col = "skyblue",
+     border = "white",
+     xlim = x_limits)
+
+abline(v = psi(solution^(-1)), col = "red", lwd = 2, lty = 2)
+abline(v = empirical_mean, col = "blue", lwd = 2, lty = 2)
+
+# -------------------------
+# Histogram 2: red line at psi(lambda1)
+# -------------------------
+hist(largest_eigenvalues,
+     breaks = break_N,
+     main = "",
+     xlab = "",
+     ylab = "",
+     col = "skyblue",
+     border = "white",
+     xlim = x_limits)
+
+abline(v = psi(lambda1), col = "red", lwd = 2, lty = 2)
+abline(v = empirical_mean, col = "blue", lwd = 2, lty = 2)
