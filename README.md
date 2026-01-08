@@ -8,13 +8,13 @@ Rcode in this folder contains the following files:
 -README.txt:
 this file
 
--files 0-5 
+-files 0-6: 
 these files should be run consecutively. They reproduce the main figures 
-and plots in our data analysis for the temperature data (easy modifications
-allow to use them for the discharge data). In 1 it is necessary to replace 
+and plots in our data analysis for the temperature data (0-5; number 6 is
+the adaption for the discharge data). In 1 it is necessary to replace 
 the path to the data set at the beginning of the code. 
 
--files s1 and s2
+-files s1 and s2:
 Files that run the code for our simulation study. EW stands for "Eigenwert"
 and produces histograms for the eigenvalues. EV stands for "Eigenvectors" and
 produces the histograms of angles. Recall that the critical threshold between
