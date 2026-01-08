@@ -1,0 +1,83 @@
+############################################################
+# Temperature Data: Mean Function Projection Plot
+############################################################
+
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+# ---------------------------------------------------------
+# Full sample and parameters
+# ---------------------------------------------------------
+Y <- tmk_matrix_imputed
+T_days <- ncol(Y)
+m_f <- colMeans(Y)
+k <- 5  # number of components to compare
+
+# ---------------------------------------------------------
+# 1️⃣ Empirical eigenvectors (PCA)
+# ---------------------------------------------------------
+C_hat <- cov(Y)
+eig <- eigen(C_hat)
+phis <- eig$vectors[, 1:k]                 # first k eigenvectors
+proj_mf_ev <- phis %*% (t(phis) %*% m_f)  # projection of mean function
+
+# ---------------------------------------------------------
+# 2️⃣ Fourier basis with constant
+# ---------------------------------------------------------
+t_grid <- seq(0, 1, length.out = T_days)
+fourier_basis <- matrix(0, nrow = T_days, ncol = k)
+
+# First basis is constant
+fourier_basis[, 1] <- 1
+
+# Fill sine/cosine pairs for remaining components
+for (j in 1:ceiling((k-1)/2)) {
+  col_sin <- 2 * j
+  col_cos <- 2 * j + 1
+  if (col_sin <= k) fourier_basis[, col_sin] <- sin(2 * pi * j * t_grid)
+  if (col_cos <= k) fourier_basis[, col_cos] <- cos(2 * pi * j * t_grid)
+}
+
+# Orthonormalize Fourier basis
+fourier_basis <- qr.Q(qr(fourier_basis))
+
+# Project mean function onto Fourier basis
+proj_mf_fourier <- fourier_basis %*% (t(fourier_basis) %*% m_f)
+
+# ---------------------------------------------------------
+# 3️⃣ Prepare data for plotting
+# ---------------------------------------------------------
+plot_data <- data.frame(
+  Day = 1:T_days,
+  True_mf = m_f,
+  EV_proj = proj_mf_ev,
+  Fourier_proj = proj_mf_fourier
+) %>%
+  pivot_longer(cols = c(True_mf, EV_proj, Fourier_proj),
+               names_to = "Type",
+               values_to = "Value")
+
+# ---------------------------------------------------------
+# 4️⃣ Professional plot
+# ---------------------------------------------------------
+p_mf_proj <- ggplot(plot_data, aes(x = Day, y = Value, color = Type, linetype = Type)) +
+  geom_line(size = 1) +
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position = "none",
+    plot.title = element_blank()
+  ) +
+  scale_color_manual(values = c(
+    "True_mf"      = "#1b9e77",  # muted green
+    "EV_proj"      = "#d95f02",  # muted orange
+    "Fourier_proj" = "#7570b3"   # muted purple
+  )) +
+  scale_linetype_manual(values = c(
+    "True_mf"      = "solid",
+    "EV_proj"      = "dashed",
+    "Fourier_proj" = "dotted"
+  )) +
+  labs(x = "Day", y = "")
+
+print(p_mf_proj)
