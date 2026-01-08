@@ -1,24 +1,33 @@
 # PCA-for-rough-functional-data
 Code complementing the paper "Does PCA Work for Rough Functional Data?"
 
-03.10.2023
+08.01.2026
 
 Rcode in this folder contains the following files:
 
 -README.txt:
 this file
 
--FDA_online_densities.R:
-Rscript that contains change point detection procedure and simulations for 
-for sparsely observed random densities
+-files 0-5 
+these files should be run consecutively. They reproduce the main figures 
+and plots in our data analysis for the temperature data (easy modifications
+allow to use them for the discharge data). In 1 it is necessary to replace 
+the path to the data set at the beginning of the code. 
 
--FDA_online_functions.R:
-Rscript that contains change point detection procedure and simulations for 
-for random, continuous functions
+-files s1 and s2
+Files that run the code for our simulation study. EW stands for "Eigenwert"
+and produces histograms for the eigenvalues. EV stands for "Eigenvectors" and
+produces the histograms of angles. Recall that the critical threshold between
+sub- and supercriticality (in the documents lambda1) is 1.3. For subcritical
+values we set lambda=1.1 and for supercritical values lambda=2. Each code
+produces two histogram plots. They are identical except for the vertical red line.
+This is the theoretical prediction assuming sub- or supercriticality. The two
+plots are given back to back for the convenience of the user, to avoid manual
+adjutment of the theoretical red line.
 
+-temperature_data 
+Includes the tempertature dataset
 
-How to use the code?
+-discharge_data
+Includes the discharge dataset
 
-Each file can be run separately. The final line of the code gives out a 
-test decision. In the last lines of the code parameter settings are 
-collected.
