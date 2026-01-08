@@ -1,0 +1,376 @@
+############################################################
+# Ninnescah River Discharge Functional Data Pipeline
+############################################################
+
+# -------------------------
+# Libraries
+# -------------------------
+library(dplyr)
+library(lubridate)
+library(zoo)
+library(tidyr)
+library(ggplot2)
+library(scales)
+
+set.seed(123)
+
+# -------------------------
+# 1. Load raw USGS RDB file
+# -------------------------
+file_path <- "/Users/au773528/Downloads/ninnescah_discharge_1939_2025.txt"
+
+raw_lines <- readLines(file_path)
+data_lines <- raw_lines[!grepl("^#", raw_lines)]
+
+df <- read.table(
+  text = data_lines,
+  header = TRUE,
+  sep = "\t",
+  stringsAsFactors = FALSE
+)
+
+# Inspect and rename columns safely
+colnames(df)
+df <- df %>%
+  rename(
+    date = datetime,
+    discharge_cfs = X55567_00060_00003
+  ) %>%
+  mutate(
+    date = as.Date(trimws(date), format = "%Y-%m-%d"),
+    discharge_cfs = as.numeric(discharge_cfs)
+  ) %>%
+  filter(!is.na(date)) %>%
+  arrange(date)
+
+# -------------------------
+# 2. Convert units & extract year
+# -------------------------
+df <- df %>%
+  mutate(
+    discharge_m3s = discharge_cfs * 0.0283168,
+    year = year(date)
+  )
+
+# -------------------------
+# 3. Build 364-day curves per year
+# -------------------------
+make_curve <- function(data_year) {
+  data_year <- data_year %>% arrange(date)
+  full_days <- data.frame(day_frac = seq(1, 364, length.out = 364))
+  data_year <- data_year %>%
+    mutate(day_frac = as.numeric(date - min(date) + 1))
+  
+  merged <- merge(full_days, data_year, by = "day_frac", all.x = TRUE)
+  merged$discharge_m3s <- na.approx(merged$discharge_m3s, na.rm = FALSE)
+  
+  if (any(is.na(merged$discharge_m3s))) return(NULL)
+  return(merged$discharge_m3s)
+}
+
+curves_list <- df %>%
+  group_split(year) %>%
+  lapply(make_curve)
+curves_list <- curves_list[!sapply(curves_list, is.null)]
+
+curve_matrix <- do.call(rbind, curves_list)
+
+# Extract corresponding years
+years_vector <- df %>%
+  group_by(year) %>%
+  summarise(n = n()) %>%
+  pull(year)
+years_vector <- years_vector[!sapply(curves_list, is.null)]
+
+# Quick plot check
+matplot(
+  t(curve_matrix[sample(nrow(curve_matrix), 10), ]),
+  type = "l", lty = 1, col = rainbow(10),
+  xlab = "Day (1–364)", ylab = "Discharge (m³/s)",
+  main = "Sample of Yearly Flow Curves: Ninnescah River"
+)
+
+# -------------------------
+# 4. Bootstrap eigenvector angles
+# -------------------------
+k <- 3
+n_boot_seq <- seq(10, 100, by = 10)
+reps <- 20
+
+angle_deg_fun <- function(v1, v2) {
+  cos_theta <- sum(v1 * v2)
+  angle_rad <- acos(pmin(pmax(abs(cos_theta), 0), 1))
+  angle_rad * 180 / pi
+}
+
+get_pc <- function(mat, k = 1) {
+  mat_centered <- scale(mat, center = TRUE, scale = FALSE)
+  svd_res <- svd(t(mat_centered))
+  vec <- svd_res$u[, k]
+  vec / sqrt(sum(vec^2))
+}
+
+results <- lapply(n_boot_seq, function(n_boot) {
+  replicate_results <- replicate(reps, {
+    sample1 <- curve_matrix[sample(nrow(curve_matrix), n_boot, replace = TRUE), ]
+    sample2 <- curve_matrix[sample(nrow(curve_matrix), n_boot, replace = TRUE), ]
+    sapply(1:k, function(pc) {
+      v1 <- get_pc(sample1, pc)
+      v2 <- get_pc(sample2, pc)
+      angle_deg_fun(v1, v2)
+    })
+  })
+  replicate_results <- t(replicate_results)
+  tibble(
+    n_boot = n_boot,
+    Eigenfunction = paste0("PC", 1:k),
+    mean_angle = colMeans(replicate_results),
+    sd_angle   = apply(replicate_results, 2, sd)
+  )
+})
+results_df <- bind_rows(results)
+
+# Plot angles
+ggplot(results_df, aes(x = n_boot, y = mean_angle, color = Eigenfunction)) +
+  geom_line(size = 1.2) +
+  geom_point(size = 2) +
+  theme_minimal(base_size = 25) +
+  labs(
+    title = "Angles Between Eigenfunctions",
+    x = "Sample size N",
+    y = "Angle (°)",
+    color = "Eigenfunction"
+  ) +
+  scale_y_continuous(limits = c(0, 90), breaks = seq(0, 90, 10)) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    legend.position = "top",
+    legend.title = element_text(face = "bold")
+  )
+
+# -------------------------
+# 5. Example raw & smoothed curves
+# -------------------------
+example_indices <- sample(1:nrow(curve_matrix), 2)
+example_years <- years_vector[example_indices]
+
+plot_df <- data.frame(
+  day_of_year = rep(1:364, 2),
+  discharge = c(curve_matrix[example_indices[1], ],
+                curve_matrix[example_indices[2], ]),
+  year = factor(rep(example_years, each = 364))
+)
+plot_df <- plot_df %>%
+  group_by(year) %>%
+  mutate(discharge_smooth = rollmean(discharge, k = 15, fill = NA, align = "center")) %>%
+  ungroup()
+
+# Raw plot
+ggplot(plot_df, aes(x = day_of_year, y = discharge, color = year)) +
+  geom_line(size = 1.2) +
+  theme_minimal(base_size = 25) +
+  labs(title = "Ninnescah River Discharge", x = "Day of Year", y = "Discharge (m³/s)")
+
+# Smoothed plot
+ggplot(plot_df, aes(x = day_of_year, y = discharge_smooth, color = year)) +
+  geom_line(size = 1.2) +
+  theme_minimal(base_size = 25) +
+  labs(title = "Smoothed Ninnescah River Discharge", x = "Day of Year", y = "Discharge (m³/s)")
+
+# -------------------------
+# 6. Onatski ratio statistics (example)
+# -------------------------
+stat <- numeric(350)
+for(j in 1:350){
+  curve_matrix_smoothed <- matrix(NA, nrow=nrow(curve_matrix), ncol=(364-j+1))
+  for(i in 1:nrow(curve_matrix)){
+    smooth_x <- stats::filter(curve_matrix[i, ], rep(1/j, j), sides = 2)
+    smooth_x <- smooth_x[!is.na(smooth_x)]
+    curve_matrix_smoothed[i, ] <- smooth_x
+  }
+  O_vec_s <- eigen(cov(curve_matrix_smoothed))$values[1:20]
+  # Replace with your actual Onatski function
+  stat[j] <- O_vec_s[1]  # placeholder for ratio statistic
+}
+
+# Elegant ggplot for Onatski ratios
+q_alpha <- 11.6
+df_stat <- data.frame(
+  k = 1:200,
+  value = stat[1:200],
+  color_group = ifelse(stat[1:200] > q_alpha, "Above", "Below")
+)
+ggplot(df_stat, aes(x = k, y = value, color = color_group)) +
+  geom_point(size = 1.8, alpha = 0.8) +
+  geom_hline(yintercept = q_alpha, linetype = "dashed", color = "grey40") +
+  scale_color_manual(values = c("Below" = "#56B1F7", "Above" = "#E31A1C"), guide = "none") +
+  labs(x = NULL, y = NULL) +
+  theme_minimal(base_size = 14) +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(color = "grey90"),
+    axis.text.x = element_text(face = "plain", color = "black", size = 14),
+    axis.text.y = element_text(face = "plain", color = "black", size = 14)
+  )
+
+
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+# ---------------------------------------------------------
+# Full sample and parameters
+# ---------------------------------------------------------
+Y <- curve_matrix           # your river discharge curves
+T_days <- ncol(Y)
+m_f <- colMeans(Y)          # mean discharge curve
+k <- 5                      # number of components to compare
+
+# ---------------------------------------------------------
+# 1️⃣ Empirical eigenvectors (PCA)
+# ---------------------------------------------------------
+C_hat <- cov(Y)
+eig <- eigen(C_hat)
+phis <- eig$vectors[, 1:k]                 # first k eigenvectors
+proj_mf_ev <- phis %*% (t(phis) %*% m_f)  # projection of mean function
+
+# ---------------------------------------------------------
+# 2️⃣ Fourier basis with constant
+# ---------------------------------------------------------
+t_grid <- seq(0, 1, length.out = T_days)
+fourier_basis <- matrix(0, nrow = T_days, ncol = k)
+
+# First basis is constant
+fourier_basis[, 1] <- 1
+
+# Fill sine/cosine pairs for remaining components
+for (j in 1:ceiling((k-1)/2)) {
+  col_sin <- 2 * j
+  col_cos <- 2 * j + 1
+  if (col_sin <= k) fourier_basis[, col_sin] <- sin(2 * pi * j * t_grid)
+  if (col_cos <= k) fourier_basis[, col_cos] <- cos(2 * pi * j * t_grid)
+}
+
+# Orthonormalize Fourier basis
+fourier_basis <- qr.Q(qr(fourier_basis))
+
+# Project mean function onto Fourier basis
+proj_mf_fourier <- fourier_basis %*% (t(fourier_basis) %*% m_f)
+
+# ---------------------------------------------------------
+# 3️⃣ Prepare data for plotting
+# ---------------------------------------------------------
+plot_data <- data.frame(
+  Day = 1:T_days,
+  True_mf = m_f,
+  EV_proj = proj_mf_ev,
+  Fourier_proj = proj_mf_fourier
+) %>%
+  pivot_longer(cols = c(True_mf, EV_proj, Fourier_proj),
+               names_to = "Type",
+               values_to = "Value")
+
+# ---------------------------------------------------------
+# 4️⃣ Professional plot
+# ---------------------------------------------------------
+p_mf_proj <- ggplot(plot_data, aes(x = Day, y = Value, color = Type, linetype = Type)) +
+  geom_line(size = 1.2) +
+  theme_minimal(base_size = 16) +
+  theme(
+    legend.position = "top",
+    plot.title = element_blank(),
+    axis.title.y = element_text(face = "bold")
+  ) +
+  scale_color_manual(values = c(
+    "True_mf"      = "#1b9e77",  # muted green
+    "EV_proj"      = "#d95f02",  # muted orange
+    "Fourier_proj" = "#7570b3"   # muted purple
+  )) +
+  scale_linetype_manual(values = c(
+    "True_mf"      = "solid",
+    "EV_proj"      = "dashed",
+    "Fourier_proj" = "dotted"
+  )) +
+  labs(x = "Day", y = "Discharge (m³/s)")
+
+print(p_mf_proj)
+
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+# ---------------------------------------------------------
+# Full sample and parameters
+# ---------------------------------------------------------
+Y <- curve_matrix           # your river discharge curves
+T_days <- ncol(Y)
+m_f <- colMeans(Y)          # mean discharge curve
+k <- 5                      # number of components to compare
+
+# ---------------------------------------------------------
+# 1️⃣ Empirical eigenvectors (PCA)
+# ---------------------------------------------------------
+C_hat <- cov(Y)
+eig <- eigen(C_hat)
+phis <- eig$vectors[, 1:k]                 # first k eigenvectors
+proj_mf_ev <- phis %*% (t(phis) %*% m_f)  # projection of mean function
+
+# ---------------------------------------------------------
+# 2️⃣ Fourier basis with constant
+# ---------------------------------------------------------
+t_grid <- seq(0, 1, length.out = T_days)
+fourier_basis <- matrix(0, nrow = T_days, ncol = k)
+
+# First basis is constant
+fourier_basis[, 1] <- 1
+
+# Fill sine/cosine pairs for remaining components
+for (j in 1:ceiling((k-1)/2)) {
+  col_sin <- 2 * j
+  col_cos <- 2 * j + 1
+  if (col_sin <= k) fourier_basis[, col_sin] <- sin(2 * pi * j * t_grid)
+  if (col_cos <= k) fourier_basis[, col_cos] <- cos(2 * pi * j * t_grid)
+}
+
+# Orthonormalize Fourier basis
+fourier_basis <- qr.Q(qr(fourier_basis))
+
+# Project mean function onto Fourier basis
+proj_mf_fourier <- fourier_basis %*% (t(fourier_basis) %*% m_f)
+
+# ---------------------------------------------------------
+# 3️⃣ Prepare data for plotting
+# ---------------------------------------------------------
+plot_data <- data.frame(
+  Day = 1:T_days,
+  True_mf = m_f,
+  EV_proj = proj_mf_ev,
+  Fourier_proj = proj_mf_fourier
+) %>%
+  pivot_longer(cols = c(True_mf, EV_proj, Fourier_proj),
+               names_to = "Type",
+               values_to = "Value")
+
+# ---------------------------------------------------------
+# 4️⃣ Clean plot (no titles, no axis labels, no legend)
+# ---------------------------------------------------------
+p_mf_proj <- ggplot(plot_data, aes(x = Day, y = Value, color = Type, linetype = Type)) +
+  geom_line(size = 1.2) +
+  theme_minimal(base_size = 16) +
+  theme(
+    legend.position = "none",
+    plot.title = element_blank(),
+    axis.title = element_blank()
+  ) +
+  scale_color_manual(values = c(
+    "True_mf"      = "#1b9e77",  # muted green
+    "EV_proj"      = "#d95f02",  # muted orange
+    "Fourier_proj" = "#7570b3"   # muted purple
+  )) +
+  scale_linetype_manual(values = c(
+    "True_mf"      = "solid",
+    "EV_proj"      = "dashed",
+    "Fourier_proj" = "dotted"
+  ))
+
+print(p_mf_proj)
