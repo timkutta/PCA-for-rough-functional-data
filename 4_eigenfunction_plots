@@ -1,0 +1,99 @@
+############################################################
+# Temperature Data: Eigenvector Plots
+############################################################
+
+library(ggplot2)
+library(tidyr)
+
+# ---------------------------------------------------------
+# 1️⃣ Single population eigenvector
+# ---------------------------------------------------------
+r <- 10   # which eigenvector to plot
+
+C_pop <- cov(tmk_matrix_imputed)
+x <- eigen(C_pop)$vectors[, r]
+n <- length(x)
+
+# Normalize x-axis to 0–1
+df_single <- data.frame(
+  Index = seq_len(n) / (n - 1),
+  Value = x
+)
+
+# Plot
+p_single_ev <- ggplot(df_single, aes(x = Index, y = Value)) +
+  geom_line(color = "#1F78B4", linewidth = 1) +             # solid blue line
+  geom_hline(yintercept = 0, color = "black", linewidth = 1.5) +  # thick zero line
+  theme_minimal() +
+  theme(
+    axis.title = element_blank(),
+    axis.text.x = element_text(face = "plain", color = "black", size = 14),
+    axis.text.y = element_text(face = "plain", color = "black", size = 14),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(color = "grey90"),
+    legend.position = "none"
+  )
+
+print(p_single_ev)
+
+# ---------------------------------------------------------
+# 2️⃣ Bootstrap eigenvectors and mean eigenfunction
+# ---------------------------------------------------------
+set.seed(1)
+
+B <- 20     # number of bootstrap replicates
+N <- 100    # sample size per bootstrap
+r <- 10     # which eigenvector to bootstrap
+
+phi_pop <- eigen(C_pop)$vectors[, r]  # population eigenvector for sign alignment
+n <- nrow(tmk_matrix_imputed)
+
+# Function: one bootstrap eigenvector with sign alignment
+get_ev <- function() {
+  idx <- sample(1:nrow(tmk_matrix_imputed), N, replace = TRUE)
+  Y <- tmk_matrix_imputed[idx, ]
+  ev <- eigen(cov(Y))$vectors[, r]
+  
+  if(sum(ev * phi_pop) < 0) ev <- -ev
+  ev
+}
+
+# Compute bootstrap eigenvectors
+EVs <- replicate(B, get_ev())  # matrix: rows = components, cols = replicates
+
+# Compute mean eigenfunction
+mean_ev <- rowMeans(EVs)
+
+# Normalize x-axis
+df_long_norm <- data.frame(
+  Index = rep(seq_len(nrow(EVs)), B) / (nrow(EVs) - 1),
+  value = as.vector(EVs),
+  rep = rep(1:B, each = nrow(EVs))
+)
+
+df_mean_norm <- data.frame(
+  Index = seq_len(nrow(EVs)) / (nrow(EVs) - 1),
+  mean_ev = mean_ev
+)
+
+# Plot: bootstrap eigenvectors + mean
+p_bootstrap_ev <- ggplot() +
+  geom_line(data = df_long_norm,
+            aes(x = Index, y = value, group = rep),
+            color = "#56B1F7", linewidth = 0.3, alpha = 0.2) +   # individual bootstraps
+  geom_line(data = df_mean_norm,
+            aes(x = Index, y = mean_ev),
+            color = "#1F78B4", linewidth = 1.2) +               # mean
+  geom_hline(yintercept = 0, color = "black", linewidth = 1.5) +
+  theme_minimal() +
+  theme(
+    axis.title = element_blank(),
+    axis.text.x = element_text(face = "plain", color = "black", size = 14),
+    axis.text.y = element_text(face = "plain", color = "black", size = 14),
+    axis.ticks = element_line(linewidth = 0.5, color = "black"),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(color = "grey90"),
+    legend.position = "none"
+  )
+
+print(p_bootstrap_ev)
