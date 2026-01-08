@@ -17,7 +17,7 @@ set.seed(123)
 # -------------------------
 # 1. Load raw USGS RDB file
 # -------------------------
-file_path <- "/Users/au773528/Downloads/ninnescah_discharge_1939_2025.txt"
+file_path <- ".......localpath......."
 
 raw_lines <- readLines(file_path)
 data_lines <- raw_lines[!grepl("^#", raw_lines)]
