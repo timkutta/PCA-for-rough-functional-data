@@ -1,4 +1,4 @@
-# PCA-for-rough-functional-data
+# FPCA
 Code complementing the paper "Does PCA Work for Rough Functional Data?"
 
 08.01.2026
