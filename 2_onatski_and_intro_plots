@@ -1,0 +1,82 @@
+############################################################
+# Temperature Data: Load + Preprocess
+############################################################
+
+library(dplyr)
+library(readr)
+library(stringr)
+library(lubridate)
+library(tidyr)
+library(zoo)
+
+# ---------------------------------------------------------
+# Config
+# ---------------------------------------------------------
+# (let others change only this line)
+file_path <- "/Users/au773528/Downloads/produkt_klima_tag_17810101_20241231_02290.txt"
+
+# ---------------------------------------------------------
+# Read raw file
+# ---------------------------------------------------------
+data_raw <- read_delim(
+  file_path,
+  delim = ";",
+  trim_ws = TRUE,
+  col_types = cols(.default = "c")
+)
+
+# Clean column names
+colnames(data_raw) <- str_trim(colnames(data_raw))
+
+# Replace -999 with NA
+data_clean <- data_raw %>%
+  mutate(across(everything(), ~ na_if(., "-999")))
+
+# Convert numeric columns (except ID, date, eor)
+num_cols <- setdiff(names(data_clean), c("STATIONS_ID", "MESS_DATUM", "eor"))
+
+data_clean <- data_clean %>%
+  mutate(
+    across(all_of(num_cols), as.numeric),
+    STATIONS_ID = as.integer(STATIONS_ID),
+    MESS_DATUM  = ymd(MESS_DATUM)
+  )
+
+# ---------------------------------------------------------
+# Extract TMK + reshape
+# ---------------------------------------------------------
+data_tmk <- data_clean %>%
+  filter(!is.na(TMK)) %>%
+  mutate(
+    year        = year(MESS_DATUM),
+    day_of_year = yday(MESS_DATUM)
+  ) %>%
+  select(year, day_of_year, TMK)
+
+tmk_matrix_df <- data_tmk %>%
+  pivot_wider(
+    names_from  = day_of_year,
+    values_from = TMK
+  )
+
+tmk_matrix <- as.matrix(tmk_matrix_df[, -1])
+rownames(tmk_matrix) <- tmk_matrix_df$year
+
+# ---------------------------------------------------------
+# Keep years with at most 2 missing days + impute
+# ---------------------------------------------------------
+keep_years <- which(rowSums(is.na(tmk_matrix)) <= 2)
+tmk_matrix_filtered <- tmk_matrix[keep_years, ]
+
+tmk_matrix_imputed <- t(apply(tmk_matrix_filtered, 1, function(x) {
+  x <- na.locf(x, na.rm = FALSE)
+  x <- na.locf(x, fromLast = TRUE)
+  x
+}))
+
+cat("Any NA left?  ", anyNA(tmk_matrix_imputed), "\n")
+cat("Any Inf left? ", any(is.infinite(tmk_matrix_imputed)), "\n")
+
+# Save for reuse
+saveRDS(tmk_matrix_imputed, file = "tmk_matrix_imputed.rds")
+write.csv(tmk_matrix_imputed, file = "tmk_matrix_imputed.csv", row.names = TRUE)
