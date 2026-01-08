@@ -1,0 +1,64 @@
+############################################################
+# Temperature Data: Nominal Level Testing
+############################################################
+
+library(parallel)
+
+# ---------------------------------------------------------
+# Load imputed temperature curves
+# ---------------------------------------------------------
+tmk_matrix_imputed <- readRDS("tmk_matrix_imputed.rds")
+n_years  <- nrow(tmk_matrix_imputed)
+n_days   <- ncol(tmk_matrix_imputed)
+
+cat("Years:", n_years, "Days:", n_days, "\n")
+
+# ---------------------------------------------------------
+# Function: One test replication using chi-square approximation
+# ---------------------------------------------------------
+test_mean_equal_chi <- function(mat, N = 100, k = 3, alpha = 0.05) {
+  sample_idx <- sample(1:nrow(mat), size = N, replace = TRUE)
+  Y <- mat[sample_idx, ]
+  
+  m_f <- colMeans(mat)
+  C_hat <- cov(Y)
+  
+  eig <- eigen(C_hat)
+  lambdas <- eig$values[1:k]
+  phis <- eig$vectors[, 1:k]
+  lambdas[lambdas < 1e-10] <- 1e-10  # avoid divide-by-zero
+  
+  A <- (Y - matrix(m_f, nrow = N, ncol = ncol(Y), byrow = TRUE)) %*% phis
+  a_bar <- colMeans(A)
+  
+  T_stat <- N * sum((a_bar^2) / lambdas)
+  p_chi <- 1 - pchisq(T_stat, df = k)
+  reject <- (p_chi < alpha)
+  
+  list(T_stat = T_stat, p_chi = p_chi, reject = reject)
+}
+
+# ---------------------------------------------------------
+# Nominal level approximation (parallel)
+# ---------------------------------------------------------
+set.seed(123)
+N_rep <- 1000        # number of test replications
+N <- 200           # sample size per replication
+k <- 7           # number of PCs
+alpha <- 0.05     # nominal level
+
+n_cores <- detectCores() - 1
+cat("Using", n_cores, "cores\n")
+
+results_chi <- mclapply(1:N_rep, function(i) {
+  test_mean_equal_chi(tmk_matrix_imputed, N = N, k = k, alpha = alpha)
+}, mc.cores = n_cores)
+
+# ---------------------------------------------------------
+# Summarize results
+# ---------------------------------------------------------
+reject_vec <- sapply(results_chi, `[[`, "reject")
+empirical_level <- mean(reject_vec)
+
+cat("Nominal alpha:", alpha, "\n")
+cat("Empirical rejection rate (chi-square):", empirical_level, "\n")
