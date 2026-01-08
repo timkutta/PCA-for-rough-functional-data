@@ -1,0 +1,102 @@
+library(parallel)
+library(mvtnorm)
+
+# -------------------------
+# Parameters
+# -------------------------
+N      <- 100
+p      <- 5*N
+lambda1 <- 2
+n_sim  <- 200
+break_N <- 15
+x_limits1 <- c(30, 90)
+x_limits2 <- c(10, 70)
+
+# -------------------------
+# Function b(x)
+# -------------------------
+b <- function(x) 1 / (((1 + 0.69*x)^3))
+
+# -------------------------
+# Super-threshold for xi
+# -------------------------
+super_threshold <- function(xi) {
+  if(xi >= 1 / max(b(0), 1e-10)) return(Inf)
+  integrand <- Vectorize(function(x) (b(x)*xi / (1 - b(x)*xi))^2)
+  integrate(integrand, lower = 0, upper = 10)$value - 1
+}
+
+# Solve for xi
+solution <- uniroot(super_threshold, lower = 0.01, upper = 1/max(b(0))*0.99)$root
+cat("Solution xi^-1 =", solution^(-1), "\n")
+
+# -------------------------
+# Psi function
+# -------------------------
+psi <- function(y) {
+  I1 <- integrate(function(x) b(x)/(y - b(x)), lower = 0, upper = 5)$value
+  I2 <- integrate(function(x) b(x)/(y - b(x)), lower = 5, upper = 1e5)$value
+  y * (1 + I1 + I2)
+}
+
+# Psi derivative
+psi_prime <- function(y) {
+  I1 <- integrate(function(x) b(x)/(y - b(x)), lower = 0, upper = Inf)$value
+  I2 <- integrate(function(x) b(x)/(y - b(x))^2, lower = 0, upper = Inf)$value
+  1 + I1 - y*I2
+}
+
+theoretical_value <- acos(abs(psi_prime(lambda1)*lambda1/psi(lambda1))) * 180/pi
+
+# -------------------------
+# Covariance matrix
+# -------------------------
+create_covariance <- function(p, lambda1, N) {
+  lambda <- numeric(p)
+  lambda[1] <- lambda1
+  lambda[2:p] <- b((1:(p-1))/N)
+  diag(lambda)
+}
+
+# -------------------------
+# Sample and compute largest eigenvector
+# -------------------------
+sample_and_eigen <- function(C, N_samples) {
+  X <- rmvnorm(N_samples, mean = rep(0, nrow(C)), sigma = C)
+  eig <- eigen(t(X) %*% X / N_samples)
+  list(largest_vector = eig$vectors[,1])
+}
+
+# -------------------------
+# Parallel simulation
+# -------------------------
+n_cores <- detectCores() - 1
+
+largest_vectors <- unlist(
+  mclapply(1:n_sim, function(i) {
+    C <- create_covariance(p, lambda1, N)
+    sample_and_eigen(C, N_samples = N)$largest_vector[1]
+  }, mc.cores = n_cores)
+)
+
+degrees <- acos(abs(largest_vectors)) * 180 / pi
+empirical_mean <- mean(degrees)
+
+# -------------------------
+# Histogram 1: red line at 90°
+# -------------------------
+hist(degrees, breaks = break_N, main = "", xlab = "", ylab = "",
+     col = "skyblue", border = "white", xlim = x_limits1)
+abline(v = 90, col = "red", lwd = 2, lty = 2)
+abline(v = empirical_mean, col = "blue", lwd = 2, lty = 2)
+
+# -------------------------
+# Histogram 2: red line at theoretical value
+# -------------------------
+hist(degrees, breaks = break_N, main = "", xlab = "", ylab = "",
+     col = "skyblue", border = "white", xlim = x_limits2)
+abline(v = theoretical_value, col = "red", lwd = 2, lty = 2)
+abline(v = empirical_mean, col = "blue", lwd = 2, lty = 2)
+
+cat("Empirical mean angle:", empirical_mean, "\n")
+cat("Theoretical angle:", theoretical_value, "\n")
