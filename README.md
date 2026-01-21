@@ -25,6 +25,9 @@ This is the theoretical prediction assuming sub- or supercriticality. The two
 plots are given back to back for the convenience of the user, to avoid manual
 adjutment of the theoretical red line.
 
+-file s3:
+Contains the simulation of onatski power curves.
+
 -temperature_data 
 Includes the tempertature dataset
 
