@@ -1,0 +1,96 @@
+onatski_ratio <- function(lambdas, K1, q_alpha) {
+  lambdas <- sort(lambdas, decreasing = TRUE)
+  R <- (lambdas[1:K1] - lambdas[2:(K1 + 1)]) /
+    (lambdas[2:(K1 + 1)] - lambdas[3:(K1 + 2)])
+  Lambda_hat <- max(R)
+  K_hat <- if (Lambda_hat <= q_alpha) 0 else max(which(R > q_alpha))
+  list(R = R, Lambda_hat = Lambda_hat, K_hat = K_hat)
+}
+
+simulate_null_quantile <- function(n, p, K1, alpha = 0.05, nrep = 1000) {
+  Lambda_vals <- numeric(nrep)
+  for (r in seq_len(nrep)) {
+    X <- matrix(rnorm(n * p), nrow = n)
+    S <- crossprod(X) / n
+    lambdas <- sort(eigen(S, symmetric = TRUE, only.values = TRUE)$values,
+                    decreasing = TRUE)
+    R <- (lambdas[1:K1] - lambdas[2:(K1 + 1)]) /
+      (lambdas[2:(K1 + 1)] - lambdas[3:(K1 + 2)])
+    Lambda_vals[r] <- max(R)
+  }
+  quantile(Lambda_vals, probs = 1 - alpha, names = FALSE)
+}
+
+
+simulate_power <- function(N, p, lambda1, K1, q_alpha, nrep = 500) {
+  
+  # Build covariance once
+  b <- function(x) 1 / exp(1.9 * x)
+  
+  lambda <- numeric(p)
+  lambda[1] <- lambda1
+  lambda[2:p] <- b((1:(p-1)) / N)
+  Sigma <- diag(lambda)
+  cholS <- chol(Sigma)
+  
+  rejects <- logical(nrep)
+  
+  for (r in seq_len(nrep)) {
+    Z <- matrix(rnorm(N * p), nrow = N)
+    X <- Z %*% cholS
+    S <- crossprod(X) / N
+    lambdas <- sort(eigen(S, symmetric = TRUE, only.values = TRUE)$values,
+                    decreasing = TRUE)
+    
+    R <- (lambdas[1:K1] - lambdas[2:(K1 + 1)]) /
+      (lambdas[2:(K1 + 1)] - lambdas[3:(K1 + 2)])
+    
+    Lambda_hat <- max(R)
+    rejects[r] <- (Lambda_hat > q_alpha)
+  }
+  
+  mean(rejects)
+}
+
+
+library(ggplot2)
+
+set.seed(2)
+
+N <- 100
+p <- 5 * N
+alpha <- 0.05
+thetas <- seq(2, 5, by = 0.25)
+
+# Null quantiles
+q2 <- simulate_null_quantile(500, 500, K1 = 2, alpha = alpha, nrep = 1000)
+q3 <- simulate_null_quantile(500, 500, K1 = 3, alpha = alpha, nrep = 1000)
+
+cat("q_alpha K1=2:", q2, "\n")
+cat("q_alpha K1=3:", q3, "\n")
+
+# Power curves
+power_df <- do.call(rbind, lapply(thetas, function(lam) {
+  data.frame(
+    lambda = lam,
+    power  = c(
+      simulate_power(N, p, lam, K1 = 2, q_alpha = q2, nrep = 500),
+      simulate_power(N, p, lam, K1 = 3, q_alpha = q3, nrep = 500)
+    ),
+    K1 = factor(c("K1 = 2", "K1 = 3"))
+  )
+}))
+
+
+ggplot(power_df, aes(x = lambda, y = power, color = K1)) +
+  geom_line(linewidth = 1.2) +
+  #geom_point(size = 2) +
+  scale_color_manual(values = c("#5F7FC7", "#D8B55A")) +
+  scale_y_continuous(limits = c(0, 1)) +
+  labs(x = NULL, y = NULL, color = NULL) +
+  theme_minimal(base_size = 13) +
+  theme(
+    legend.position = c(0.85, 0.15),
+    legend.background = element_rect(fill = "white", color = NA),
+    panel.grid.minor = element_blank()
+  )
